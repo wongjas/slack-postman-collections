@@ -1,0 +1,358 @@
+{
+	"info": {
+		"_postman_id": "bbe66971-db21-489c-9d6f-f6740bfd6823",
+		"name": "Archiving old channels",
+		"description": "TODO: Add link to article + copy copy here.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "19655515"
+	},
+	"item": [
+		{
+			"name": "conversations.list",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"// If your workspace has more than 200 channels, add the `cursor` value to subsequent calls of `conversations.list` to retrieve the full list of channels",
+							"let cursor = pm.collectionVariables.get(\"cursor\")",
+							"if (cursor) {",
+							"    pm.request.url.query.add(\"cursor=\" + cursor);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const response = pm.response.json()",
+							"",
+							"// Failed Slack responses also have a status code of HTTP 200,",
+							"// so you need to check for `ok: true` in the response body.",
+							"pm.test(\"Slack status is OK\", function () {",
+							"    pm.expect(response.ok).to.equal(true);",
+							"});",
+							"",
+							"// Extract channel ids from the response to `conversations.list` and add them to previous calls",
+							"let channels = response.channels;",
+							"let currentChannelIds = [];",
+							"for (let i = 0; i < channels.length; i++) {",
+							"    if (channels[i].is_general == true) {",
+							"        // Skip the #general channel as you cannot archive it",
+							"        console.log(\"Skipping the #general channel\")",
+							"    } else {",
+							"        currentChannelIds.push(channels[i].id)",
+							"    }",
+							"}",
+							"",
+							"let channelIds = pm.collectionVariables.get(\"channelIds\")",
+							"let allChannelIds = [...channelIds, ...currentChannelIds]",
+							"pm.collectionVariables.set(\"channelIds\", allChannelIds);",
+							"",
+							"// Keep calling `conversations.list` until there aren't any more channels",
+							"let cursor = response.response_metadata.next_cursor",
+							"if (cursor) {",
+							"    pm.collectionVariables.set(\"cursor\", cursor)",
+							"    postman.setNextRequest(\"conversations.list\");",
+							"} else if (allChannelIds.length === 0) {",
+							"    postman.setNextRequest(null)",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://slack.com/api/conversations.list?exclude_archived=true&limit=200&types=public_channel",
+					"protocol": "https",
+					"host": [
+						"slack",
+						"com"
+					],
+					"path": [
+						"api",
+						"conversations.list"
+					],
+					"query": [
+						{
+							"key": "exclude_archived",
+							"value": "true"
+						},
+						{
+							"key": "limit",
+							"value": "200",
+							"description": "200 is the reccomended number to iterate over."
+						},
+						{
+							"key": "types",
+							"value": "public_channel"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "conversations.history",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"let currentChannel = pm.collectionVariables.get(\"currentChannel\");",
+							"let channelIds = pm.collectionVariables.get(\"channelIds\");",
+							"let oldestLastMessage = pm.collectionVariables.get(\"oldestLastMessage\");",
+							"",
+							"const responseJson = pm.response.json()",
+							"pm.test(\"Checking history of channel \" + currentChannel, function () {",
+							"    pm.expect(responseJson.ok).to.equal(true);",
+							"});",
+							"",
+							"let messages = responseJson.messages;",
+							"let latestMessageTs = messages[0].ts;",
+							"",
+							"// Logic for deciding which method to run",
+							"if (latestMessageTs < oldestLastMessage){",
+							"    postman.setNextRequest(\"chat.postMessage\");",
+							"} else {",
+							"    if (channelIds && channelIds.length > 0) {",
+							"        postman.setNextRequest(\"conversations.history\");",
+							"    } else {",
+							"        postman.setNextRequest(null)",
+							"    }",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"let channelIds = pm.collectionVariables.get(\"channelIds\");",
+							"",
+							"let currentChannel = channelIds.shift();",
+							"",
+							"// Set up current run and subsequent runs with the correct variables",
+							"pm.collectionVariables.set(\"currentChannel\", currentChannel);",
+							"pm.collectionVariables.set(\"channelIds\", channelIds);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://slack.com/api/conversations.history?channel={{currentChannel}}",
+					"protocol": "https",
+					"host": [
+						"slack",
+						"com"
+					],
+					"path": [
+						"api",
+						"conversations.history"
+					],
+					"query": [
+						{
+							"key": "channel",
+							"value": "{{currentChannel}}"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "chat.postMessage",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"let currentChannel = pm.collectionVariables.get(\"currentChannel\");",
+							"",
+							"const responseJson = pm.response.json()",
+							"",
+							"pm.test(\"Archive message posted in channel \" + currentChannel, function () {",
+							"    pm.expect(responseJson.ok).to.equal(true);",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": {
+					"raw": "https://slack.com/api/chat.postMessage?text=It looks like this channel hasn't been used in a while and has been archived.  For more information about this, get in touch with an Admin or Owner on your workspace.&channel={{currentChannel}}&as_user=true",
+					"protocol": "https",
+					"host": [
+						"slack",
+						"com"
+					],
+					"path": [
+						"api",
+						"chat.postMessage"
+					],
+					"query": [
+						{
+							"key": "text",
+							"value": "It looks like this channel hasn't been used in a while and has been archived.  For more information about this, get in touch with an Admin or Owner on your workspace."
+						},
+						{
+							"key": "channel",
+							"value": "{{currentChannel}}"
+						},
+						{
+							"key": "as_user",
+							"value": "true"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "conversations.archive",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"let currentChannel = pm.collectionVariables.get(\"currentChannel\")",
+							"let channelIds = pm.collectionVariables.get(\"channelIds\");",
+							"",
+							"pm.test(\"Archive of channel \" + currentChannel + \" was successful\", function () {",
+							"    const responseJson = pm.response.json()",
+							"    pm.expect(responseJson.ok).to.equal(true);",
+							"});",
+							"",
+							"// Loop back to \"conversations.history\" with the remainder of channels",
+							"if (channelIds && channelIds.length > 0){",
+							"    postman.setNextRequest(\"conversations.history\");",
+							"} else {",
+							"    postman.setNextRequest(null);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": {
+					"raw": "https://slack.com/api/conversations.archive?channel={{currentChannel}}",
+					"protocol": "https",
+					"host": [
+						"slack",
+						"com"
+					],
+					"path": [
+						"api",
+						"conversations.archive"
+					],
+					"query": [
+						{
+							"key": "channel",
+							"value": "{{currentChannel}}"
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"auth": {
+		"type": "oauth2",
+		"oauth2": [
+			{
+				"key": "tokenName",
+				"value": "Delete Messages Token",
+				"type": "string"
+			},
+			{
+				"key": "challengeAlgorithm",
+				"value": "S256",
+				"type": "string"
+			},
+			{
+				"key": "useBrowser",
+				"value": true,
+				"type": "boolean"
+			},
+			{
+				"key": "grant_type",
+				"value": "authorization_code",
+				"type": "string"
+			},
+			{
+				"key": "addTokenTo",
+				"value": "header",
+				"type": "string"
+			},
+			{
+				"key": "client_authentication",
+				"value": "body",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "oldestLastMessage",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "currentChannel",
+			"value": ""
+		},
+		{
+			"key": "channelIds",
+			"value": []
+		},
+		{
+			"key": "cursor",
+			"value": ""
+		}
+	]
+}
